@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "doc-expiry-doctor"
+version = "1.0.0"
+description = "Zero-dependency CLI that tracks document expiries (CDL, medical card, insurance, registration) from a JSON file"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Amir Hussain" }]
+requires-python = ">=3.9"
+keywords = ["expiry", "documents", "cdl", "compliance", "trucking", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+[project.scripts]
+doc-expiry-doctor = "doc_expiry_doctor:main"
+
+[project.urls]
+Homepage = "https://github.com/aamirtechs/doc-expiry-doctor"
+Issues = "https://github.com/aamirtechs/doc-expiry-doctor/issues"
+
+[tool.setuptools]
+py-modules = ["doc_expiry_doctor"]
