@@ -1,4 +1,5 @@
 # doc-expiry-doctor
+**Live tool:** https://aamirtechs.github.io/doc-expiry-doctor/ (runs in your browser, no install)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/aamirtechs/doc-expiry-doctor/blob/main/LICENSE) [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/aamirtechs/doc-expiry-doctor/issues)
 

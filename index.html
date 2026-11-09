@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>doc-expiry-doctor</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:#f6f8fb;color:#17233b}
+header{background:#0b1f3a;color:#fff;padding:28px 20px;border-bottom:4px solid #d4a72c}
+header .wrap, main{max-width:900px;margin:0 auto}
+header h1{margin:0 0 6px;font-size:28px} header p{margin:0;color:#cfd9e8}
+main{padding:22px 16px 40px}
+.card{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 10px rgba(11,31,58,.08)}
+label{font-weight:600;display:block;margin:14px 0 6px}
+textarea{width:100%;min-height:170px;padding:10px;border:1px solid #c9d3e0;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+input[type=text],input[type=number],input[type=date],select{padding:8px 10px;border:1px solid #c9d3e0;border-radius:8px;max-width:100%}
+.row{display:flex;flex-wrap:wrap;gap:14px} .row>div{flex:1 1 180px}
+button{background:#0b1f3a;color:#fff;border:0;border-radius:8px;padding:10px 18px;cursor:pointer;font-size:15px}
+button.accent{background:#d4a72c;color:#17233b;font-weight:700}
+button.secondary{background:#e7edf5;color:#0b1f3a}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+pre{background:#0b1f3a;color:#eef3fa;border-radius:10px;padding:16px;overflow:auto;white-space:pre-wrap;min-height:120px;font-size:13px}
+footer{max-width:900px;margin:0 auto;padding:0 16px 30px;color:#5a6a82;font-size:14px}
+a{color:#0b1f3a}
+.note{color:#5a6a82;font-size:13px}
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>doc-expiry-doctor</h1><p>Track document expiries from a JSON file: what is already expired, what expires soon, and what is still fine, sorted by expiry date.</p></div></header>
+<main>
+<div class="card">
+<label for="file">Choose a file</label>
+<input type="file" id="file" >
+<label for="input">JSON documents input</label>
+<textarea id="input" placeholder="Paste input here, choose a file, or load the sample."></textarea>
+
+<div class="row">
+<div><label for="today">Today (CLI --today, YYYY-MM-DD)</label><input type="date" id="today"></div>
+<div><label for="within">Expiring-soon window in days (CLI --within, default 30)</label><input type="number" id="within" value="30" min="0"></div>
+<div><label for="mode">Report mode</label><select id="mode"><option value="default">Expired plus expiring soon</option><option value="all">All documents (--all)</option><option value="expired">Expired only (--expired)</option></select></div>
+</div>
+<div class="row">
+<div><label for="typef">Type filter (CLI --type, comma separated, exact, case-insensitive)</label><input type="text" id="typef" placeholder="CDL"></div>
+<div><label for="holderf">Holder filter (CLI --holder, comma separated, substring)</label><input type="text" id="holderf" placeholder="priya"></div>
+<div><label for="fname">File label shown in the report</label><input type="text" id="fname" value="documents.json"></div>
+</div>
+<label><input type="checkbox" id="check"> Validate only (CLI --check)</label>
+<div class="btns">
+<button class="accent" id="run">Run</button>
+<button class="secondary" id="sample">Load sample</button>
+<button class="secondary" id="sample2">Load bad sample (for --check)</button>
+<button class="secondary" id="download">Download report</button>
+</div>
+<label for="output">Report</label>
+<pre id="output">Press Run to see the report.</pre>
+</div>
+</main>
+<footer>
+<p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/doc-expiry-doctor">Source</a></p>
+<p>Privacy: this tool runs 100% in your browser, nothing is uploaded.</p>
+</footer>
+<script id="core">
+
+var VERSION="1.0.0";
+function parseDateStrict(text){
+  if(typeof text!=="string" || !/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  var p=text.split("-"), y=+p[0], m=+p[1], d=+p[2];
+  var leap=(y%4===0&&y%100!==0)||y%400===0; var dim=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+  if(m<1||m>12||d<1||d>dim[m-1]) return "invalid";
+  return {y:y,m:m,d:d, days: Math.round(Date.UTC(y,m-1,d)/86400000), iso:text};
+}
+function pyRepr(v){
+  if(typeof v==="string") return "'"+v.replace(/\\/g,"\\\\").replace(/'/g,"\\'")+"'";
+  if(v===null) return "None"; if(typeof v==="boolean") return v?"True":"False";
+  return String(v);
+}
+function typeName(v){
+  if(v===null) return "NoneType"; if(Array.isArray(v)) return "list";
+  var t=typeof v; if(t==="object") return "dict"; if(t==="string") return "str";
+  if(t==="boolean") return "bool"; if(t==="number") return Number.isInteger(v)?"int":"float";
+  return t;
+}
+function fieldOf(rec,names){ for(var i=0;i<names.length;i++){ if(names[i] in rec && rec[names[i]]!==null && rec[names[i]]!==undefined) return rec[names[i]]; } return null; }
+function normalizeRecord(raw,index){
+  var label="record "+(index+1);
+  if(typeof raw!=="object" || raw===null || Array.isArray(raw)) return {error: label+": expected an object, got "+typeName(raw)};
+  var holder=fieldOf(raw,["holder"]), docType=fieldOf(raw,["type","document_type"]), expiryRaw=fieldOf(raw,["expiry","expiry_date"]), reminder=fieldOf(raw,["reminder_days"]);
+  if(typeof holder!=="string" || !holder.trim()) return {error: label+": missing or empty required field 'holder'"};
+  if(typeof docType!=="string" || !docType.trim()) return {error: label+": missing or empty required field 'type'"};
+  if(expiryRaw===null) return {error: label+": missing required field 'expiry'"};
+  var pd=parseDateStrict(expiryRaw);
+  if(pd===null) return {error: label+": invalid 'expiry': not an ISO date (expected YYYY-MM-DD): "+pyRepr(expiryRaw)};
+  if(pd==="invalid") return {error: label+": invalid 'expiry': not a real calendar date: "+pyRepr(expiryRaw)};
+  if(reminder!==null){
+    if(typeof reminder==="boolean" || typeof reminder!=="number" || !Number.isInteger(reminder)) return {error: label+": 'reminder_days' must be a whole number"};
+    if(reminder<0) return {error: label+": 'reminder_days' must not be negative"};
+  }
+  return {record:{holder:holder.trim(), type:docType.trim(), expiry:expiryRaw, reminder_days:reminder, _days:pd.days}};
+}
+function describeDays(days){
+  if(days===0) return "expires today"; if(days===1) return "in 1 day"; if(days===-1) return "1 day ago";
+  if(days>0) return "in "+days+" days"; return (-days)+" days ago";
+}
+function localToday(){ var n=new Date(); function p(x){return String(x).padStart(2,"0");} return n.getFullYear()+"-"+p(n.getMonth()+1)+"-"+p(n.getDate()); }
+window.runTool = function(inputText, options){
+  options=options||{};
+  var path=options.fileName||"documents.json";
+  var within = (options.within===undefined||options.within===null||options.within==="") ? 30 : parseInt(options.within,10);
+  if(isNaN(within)||within<0) return "doc-expiry-doctor: error: --within must not be negative";
+  var todayText = options.today || localToday();
+  var todayParsed=parseDateStrict(todayText);
+  if(todayParsed===null||todayParsed==="invalid") return "doc-expiry-doctor: error: --today: not a real calendar date or not an ISO date (expected YYYY-MM-DD): "+pyRepr(todayText);
+  var data;
+  try{ data=JSON.parse(String(inputText==null?"":inputText)); }
+  catch(e){ return "doc-expiry-doctor: error: invalid JSON in "+path+": "+e.message; }
+  var rawList;
+  if(data!==null && typeof data==="object" && !Array.isArray(data)){
+    if(!("documents" in data) || data.documents===null || data.documents===undefined) return "doc-expiry-doctor: error: "+path+": expected a list, or an object with a 'documents' list";
+    rawList=data.documents;
+  } else rawList=data;
+  if(!Array.isArray(rawList)) return "doc-expiry-doctor: error: "+path+": expected a list of records";
+  var records=[], errors=[];
+  rawList.forEach(function(raw,i){ var r=normalizeRecord(raw,i); if(r.error) errors.push(r.error); else records.push(r.record); });
+  if(options.check){
+    var clines=["doc-expiry-doctor "+VERSION+" | check: "+path, ""];
+    if(!errors.length) clines.push("OK: "+records.length+" valid record(s), no errors.");
+    else { clines.push("ERRORS ("+errors.length+"):"); errors.forEach(function(e){ clines.push("  "+e); }); clines.push(""); clines.push(records.length+" valid record(s), "+errors.length+" invalid record(s)."); }
+    return clines.join("\n")+"\n";
+  }
+  if(errors.length){
+    var elines=["doc-expiry-doctor: error: "+errors.length+" invalid record(s) in "+path+":"];
+    errors.forEach(function(e){ elines.push("  "+e); });
+    elines.push("Fix the file or run with --check to see all errors.");
+    return elines.join("\n");
+  }
+  var types=options.types||[], holders=options.holders||[];
+  if(types.length){ var wanted={}; types.forEach(function(t){ wanted[String(t).toLowerCase()]=1; }); records=records.filter(function(r){ return wanted[r.type.toLowerCase()]; }); }
+  if(holders.length){ var hw=holders.map(function(h){ return String(h).toLowerCase(); }); records=records.filter(function(r){ return hw.some(function(w){ return r.holder.toLowerCase().indexOf(w)>=0; }); }); }
+  function daysUntil(r){ return r._days - todayParsed.days; }
+  function effWindow(r){ return r.reminder_days!==null ? r.reminder_days : within; }
+  function classify(r){ var d=daysUntil(r); if(d<0) return ["expired",d]; if(d<=effWindow(r)) return ["expiring_soon",d]; return ["later",d]; }
+  function sorted(list){ return list.slice().sort(function(a,b){ if(a.expiry!==b.expiry) return a.expiry<b.expiry?-1:1; var ah=a.holder.toLowerCase(), bh=b.holder.toLowerCase(); if(ah!==bh) return ah<bh?-1:1; var at=a.type.toLowerCase(), bt=b.type.toLowerCase(); if(at!==bt) return at<bt?-1:1; return 0; }); }
+  var buckets={expired:[],expiring_soon:[],later:[]};
+  sorted(records).forEach(function(r){ buckets[classify(r)[0]].push(r); });
+  var labels={expired:"EXPIRED", expiring_soon:"EXPIRING SOON", later:"LATER"};
+  function fmtLine(r){ var c=classify(r); return "  "+labels[c[0]].padEnd(13)+" "+r.expiry+"  "+r.holder+"  "+r.type+"  ("+describeDays(c[1])+")"; }
+  var lines=["doc-expiry-doctor "+VERSION+" | today "+todayText+" | within "+within+" days", "input: "+path+" ("+records.length+" records)", ""];
+  var showAll = options.mode==="all", expiredOnly = options.mode==="expired";
+  if(showAll){
+    lines.push("All documents, sorted by expiry ("+records.length+"):"); lines.push("");
+    sorted(records).forEach(function(r){ lines.push(fmtLine(r)); });
+    lines.push("");
+  } else {
+    var shown=buckets.expired.slice(); if(!expiredOnly) shown=shown.concat(buckets.expiring_soon);
+    if(buckets.expired.length){
+      lines.push("Already expired ("+buckets.expired.length+"):"); 
+      buckets.expired.forEach(function(r){ lines.push(fmtLine(r)); });
+      lines.push("");
+    }
+    if(!expiredOnly){
+      lines.push("Expiring within "+within+" days ("+buckets.expiring_soon.length+"):");
+      buckets.expiring_soon.forEach(function(r){ var note = r.reminder_days!==null ? "  [reminder "+r.reminder_days+" days]" : ""; lines.push(fmtLine(r)+note); });
+      lines.push("");
+    }
+    if(!shown.length){ lines.push(expiredOnly ? "No expired documents." : "No documents expired and none expiring within "+within+" days."); lines.push(""); }
+  }
+  lines.push("Summary: "+buckets.expired.length+" expired, "+buckets.expiring_soon.length+" expiring soon, "+buckets.later.length+" later, "+records.length+" total");
+  return lines.join("\n")+"\n";
+};
+
+</script>
+<script>
+var SAMPLE = `[{"expiry":"2026-11-20","holder":"Maria Lopez","type":"CDL"},{"expiry":"2026-12-15","holder":"Maria Lopez","type":"Medical card"},{"expiry":"2026-10-15","holder":"James Carter","type":"CDL"},{"expiry":"2027-01-30","holder":"James Carter","type":"Insurance"},{"expiry":"2026-11-02","holder":"Priya Patel","type":"Registration"},{"expiry":"2027-03-01","holder":"Priya Patel","type":"Medical card"},{"expiry":"2026-12-20","holder":"Sam Ortiz","reminder_days":60,"type":"CDL"}]`;
+var SAMPLE_NAME = "documents.json";
+var pickedName = "";
+var inputEl = document.getElementById("input");
+var outputEl = document.getElementById("output");
+document.getElementById("file").addEventListener("change", function(ev){
+  var f = ev.target.files[0]; if(!f) return; pickedName = f.name;
+  var r = new FileReader(); r.onload = function(){ inputEl.value = r.result; document.getElementById("fname").value = f.name; }; r.readAsText(f);
+});
+function gatherOptions(){ return { fileName: document.getElementById("fname").value || pickedName || "documents.json",
+  today: document.getElementById("today").value || undefined,
+  within: document.getElementById("within").value === "" ? 30 : parseInt(document.getElementById("within").value, 10),
+  mode: document.getElementById("mode").value,
+  check: document.getElementById("check").checked,
+  types: document.getElementById("typef").value.split(",").map(function(s){return s.trim();}).filter(function(s){return s!=="";}),
+  holders: document.getElementById("holderf").value.split(",").map(function(s){return s.trim();}).filter(function(s){return s!=="";}) }; }
+document.getElementById("run").addEventListener("click", function(){
+  try { outputEl.textContent = window.runTool(inputEl.value, gatherOptions()); }
+  catch(e){ outputEl.textContent = "Error: " + e.message; }
+});
+document.getElementById("sample").addEventListener("click", function(){
+  inputEl.value = SAMPLE; pickedName = SAMPLE_NAME;
+  document.getElementById("today").value = "2026-11-02"; document.getElementById("fname").value = "examples/documents.json";
+});
+document.getElementById("download").addEventListener("click", function(){
+  var blob = new Blob([outputEl.textContent], {type:"text/plain"});
+  var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "report.txt"; a.click(); URL.revokeObjectURL(a.href);
+});
+document.getElementById("sample2").addEventListener("click", function(){ inputEl.value = BAD_SAMPLE; pickedName = "bad-documents.json"; document.getElementById("fname").value = "examples/bad-documents.json"; document.getElementById("check").checked = true; });
+var BAD_SAMPLE = `[{"expiry":"2026-11-20","holder":"Maria Lopez","type":"CDL"},{"expiry":"2026-02-30","holder":"James Carter","type":"CDL"},{"expiry":"2027-01-30","type":"Insurance"},{"expiry":"20 Nov 2026","holder":"Sam Ortiz","type":"CDL"}]`;
+(function(){ var t=document.getElementById("today"); if(!t.value){ var n=new Date(); function p(x){return String(x).padStart(2,"0");} t.value = n.getFullYear()+"-"+p(n.getMonth()+1)+"-"+p(n.getDate()); } })();
+</script>
+</body>
+</html>
